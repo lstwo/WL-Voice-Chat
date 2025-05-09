@@ -26,14 +26,20 @@ public class Plugin : BaseUnityPlugin
         [HarmonyPostfix]
         private static void GamePlayCamera_Awake_Postfix(ref GameplayCamera __instance)
         {
-            var listener = __instance.gameObject.AddComponent<AudioListener>();
-            
-            var go = new GameObject("VoiceChatManager");
+            __instance.gameObject.AddComponent<AudioListener>();
+        }
+
+        [HarmonyPatch(typeof(PlayerController), "Awake")]
+        [HarmonyPostfix]
+        public static void PlayerController_Awake_Postfix(ref PlayerController __instance)
+        {
+            var go = __instance.gameObject;
             var source = go.AddComponent<AudioSource>();
+            source.spatialBlend = 1.0f;
             
             var voiceChat = go.AddComponent<VoiceChat>();
+            voiceChat.player = __instance;
             voiceChat.source = source;
-            voiceChat.Initialize();
         }
     }
 }

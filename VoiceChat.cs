@@ -3,10 +3,14 @@ using System.IO;
 using HawkNetworking;
 using ShadowLib.Networking;
 using UnityEngine;
+using WLProxChat;
 
-public partial class VoiceChat : ShadowNetworkBehaviour
+public class VoiceChat : ShadowNetworkBehaviour
 {
+    public static float Volume;
+    
     public AudioSource source;
+    public PlayerController player;
 
     private MemoryStream output;
     private MemoryStream stream;
@@ -31,8 +35,18 @@ public partial class VoiceChat : ShadowNetworkBehaviour
         RPC_VOICE_DATA = networkObject.RegisterRPC(RpcVoiceData);
     }
 
-    public void Initialize()
+    protected override void NetworkPost(HawkNetworkObject networkObject)
     {
+        base.NetworkPost(networkObject);
+        
+        networkObject.AssignOwnership(player.networkObject.GetOwner(), false);
+        initialized = true;
+    }
+
+    protected override void Start()
+    {
+        base.Start();
+        
         optimalRate = (int)SteamUser.OptimalSampleRate;
 
         clipBufferSize = optimalRate * 5;
@@ -45,18 +59,29 @@ public partial class VoiceChat : ShadowNetworkBehaviour
         source.clip = AudioClip.Create("VoiceData", (int)256, 1, (int)optimalRate, true, OnAudioRead, null);
         source.loop = true;
         source.Play();
-
-        initialized = true;
     }
 
     private void Update()
     {
-        if (networkObject == null || !initialized)
+        if (!initialized || networkObject == null || !networkObject.IsOwner())
         {
             return;
         }
-        
-        SteamUser.VoiceRecord = Input.GetKey(KeyCode.V);
+
+        var voiceMode = VoiceChatMod.Mode;
+
+        if (voiceMode == VoiceChatMode.Off)
+        {
+            SteamUser.VoiceRecord = false;
+        }
+        else if(voiceMode == VoiceChatMode.AlwaysOn)
+        {
+            SteamUser.VoiceRecord = true;
+        }
+        else
+        {
+            SteamUser.VoiceRecord = Input.GetKey(KeyCode.V);
+        }
 
         if (!SteamUser.HasVoiceData)
         {
@@ -66,7 +91,7 @@ public partial class VoiceChat : ShadowNetworkBehaviour
         var compressedWritten = SteamUser.ReadVoiceData(stream);
         stream.Position = 0;
 
-        networkObject.SendRPCUnreliable(RPC_VOICE_DATA, RPCRecievers.Others, 
+        networkObject.SendRPCUnreliable(RPC_VOICE_DATA, RPCRecievers.All, 
             new VoiceDataNetworkMessage {bytesWritten = compressedWritten, compressed = stream.GetBuffer()}.Serialize());
     }
 

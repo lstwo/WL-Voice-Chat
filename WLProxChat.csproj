@@ -25,6 +25,18 @@
         <Reference Include="ShadowLib">
             <HintPath>lib/ShadowLib.dll</HintPath>
         </Reference>
+
+        <Reference Include="lstwoMODS_Core">
+            <HintPath>lib/lstwoMODS_Core.dll</HintPath>
+        </Reference>
+
+        <Reference Include="UniverseLib">
+            <HintPath>lib/UniverseLib.Mono.dll</HintPath>
+        </Reference>
+
+        <Reference Include="lstwoMODS_WobblyLife">
+            <HintPath>lib/lstwoMODS_WobblyLife.dll</HintPath>
+        </Reference>
     </ItemGroup>
 
     <ItemGroup Condition="'$(TargetFramework.TrimEnd(`0123456789`))' == 'net'">
