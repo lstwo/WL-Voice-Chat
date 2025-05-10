@@ -1,5 +1,6 @@
 using Steamworks;
 using System.IO;
+using System.Linq;
 using HawkNetworking;
 using ShadowLib.Networking;
 using UnityEngine;
@@ -27,6 +28,52 @@ public class VoiceChat : ShadowNetworkBehaviour
     private byte RPC_VOICE_DATA;
     
     private bool initialized = false;
+    
+    private int debugPacketsReceived;
+    private float debugLastReceivedTime;
+    private float debugLastReadData;
+    private int debugLargestPlaybackBuffer;
+    private byte[] debugLastReceivedData;
+
+    private void OnGUI()
+    {
+        GUILayout.BeginArea(new Rect(10, 10, 300, 450), "Voice Chat Debug", GUI.skin.window);
+    
+        GUILayout.Label($"Is Initialized: {initialized}");
+
+        if (initialized)
+        {
+            GUILayout.Space(10);
+
+            GUILayout.Label($"Is Owner: {networkObject?.IsOwner()}");
+            GUILayout.Label($"Voice Mode: {VoiceChatMod.Mode}");
+            GUILayout.Label($"Voice Recording: {SteamUser.VoiceRecord}");
+            GUILayout.Label($"Has Voice Data: {SteamUser.HasVoiceData}");
+
+            GUILayout.Space(10);
+    
+            GUILayout.Label($"Optimal Sample Rate: {optimalRate}");
+            GUILayout.Label($"Clip Buffer Size: {clipBufferSize}");
+            GUILayout.Label($"Playback Buffer: {playbackBuffer}");
+            GUILayout.Label($"Data Position: {dataPosition}");
+            GUILayout.Label($"Data Received: {dataReceived}");
+            GUILayout.Label($"Last Read Audio Data: {debugLastReadData}");
+            GUILayout.Label($"Largest Playback Buffer: {debugLargestPlaybackBuffer}");
+
+            GUILayout.Space(10);
+
+            GUILayout.Label($"Packets Received: {debugPacketsReceived}");
+            GUILayout.Label($"Last Packet Time: {debugLastReceivedTime:F2}s");
+            
+            if (debugLastReceivedData != null)
+            {
+                GUILayout.Label($"Last Received Data: [{string.Join(", ", debugLastReceivedData)}]");
+            }
+        }
+
+        GUILayout.EndArea();
+    }
+
 
     protected override void RegisterRPCs(HawkNetworkObject networkObject)
     {
@@ -56,7 +103,7 @@ public class VoiceChat : ShadowNetworkBehaviour
         output = new MemoryStream();
         input = new MemoryStream();
 
-        source.clip = AudioClip.Create("VoiceData", (int)256, 1, (int)optimalRate, true, OnAudioRead, null);
+        source.clip = AudioClip.Create("VoiceData", 256, 1, optimalRate, true, OnAudioRead, null);
         source.loop = true;
         source.Play();
     }
@@ -68,6 +115,7 @@ public class VoiceChat : ShadowNetworkBehaviour
             return;
         }
 
+        source.volume = Volume;
         var voiceMode = VoiceChatMod.Mode;
 
         if (voiceMode == VoiceChatMode.Off)
@@ -91,8 +139,8 @@ public class VoiceChat : ShadowNetworkBehaviour
         var compressedWritten = SteamUser.ReadVoiceData(stream);
         stream.Position = 0;
 
-        networkObject.SendRPCUnreliable(RPC_VOICE_DATA, RPCRecievers.All, 
-            new VoiceDataNetworkMessage {bytesWritten = compressedWritten, compressed = stream.GetBuffer()}.Serialize());
+        networkObject.SendRPCUnreliable(RPC_VOICE_DATA, RPCRecievers.All, new VoiceDataNetworkMessage
+            {bytesWritten = compressedWritten, compressed = stream.GetBuffer()}.Serialize());
     }
 
     public void RpcVoiceData(HawkNetReader reader, HawkRPCInfo info)
@@ -102,16 +150,20 @@ public class VoiceChat : ShadowNetworkBehaviour
             return;
         }
         
+        debugPacketsReceived++;
+        debugLastReceivedTime = Time.time;
+        
         var voiceData = reader.ReadHawkMessage<VoiceDataNetworkMessage>();
         var compressed = voiceData.compressed;
-        var bytesWritten = voiceData.bytesWritten;
+        var compressedWritten = voiceData.bytesWritten;
+        debugLastReceivedData = compressed.Skip(14).Take(16).ToArray();
         
-        input.Write(compressed, 0, bytesWritten);
+        input.Write(compressed, 0, compressed.Length);
         input.Position = 0;
-
-        var uncompressedWritten = SteamUser.DecompressVoice(input, bytesWritten, output);
+        
+        var uncompressedWritten = SteamUser.DecompressVoice(input, compressedWritten, output);
         input.Position = 0;
-
+        
         var outputBuffer = output.GetBuffer();
         WriteToClip(outputBuffer, uncompressedWritten);
         output.Position = 0;
@@ -119,6 +171,11 @@ public class VoiceChat : ShadowNetworkBehaviour
 
     private void OnAudioRead(float[] data)
     {
+        if (playbackBuffer > debugLargestPlaybackBuffer)
+        {
+            debugLargestPlaybackBuffer = playbackBuffer;
+        }
+        
         for (var i = 0; i < data.Length; ++i)
         {
             data[i] = 0;
@@ -130,6 +187,7 @@ public class VoiceChat : ShadowNetworkBehaviour
             
             dataPosition = (dataPosition + 1) % clipBufferSize;
             data[i] = clipBuffer[dataPosition];
+            debugLastReadData = data[i];
             playbackBuffer --;
         }
     }
@@ -140,6 +198,7 @@ public class VoiceChat : ShadowNetworkBehaviour
         {
             var converted = (short)(uncompressed[i] | uncompressed[i + 1] << 8) / 32767.0f;
             clipBuffer[dataReceived] = converted;
+            Plugin.Logger.LogInfo(converted);
 
             dataReceived = (dataReceived +1) % clipBufferSize;
 

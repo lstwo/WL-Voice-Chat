@@ -1,4 +1,5 @@
-﻿using BepInEx;
+﻿using System;
+using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
 using UnityEngine;
@@ -29,11 +30,15 @@ public class Plugin : BaseUnityPlugin
             __instance.gameObject.AddComponent<AudioListener>();
         }
 
-        [HarmonyPatch(typeof(PlayerController), "Awake")]
+        [HarmonyPatch(typeof(PlayerControllerInteractor), "Start")]
         [HarmonyPostfix]
-        public static void PlayerController_Awake_Postfix(ref PlayerController __instance)
+        public static void PlayerController_Start_Postfix(ref PlayerController __instance)
         {
-            var go = __instance.gameObject;
+            var go = new GameObject("Voice Chat Manager")
+            {
+                transform = { parent = __instance.transform }
+            };
+
             var source = go.AddComponent<AudioSource>();
             source.spatialBlend = 1.0f;
             

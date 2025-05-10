@@ -1,3 +1,4 @@
+using System;
 using HawkNetworking;
 
 public class VoiceDataNetworkMessage : IHawkMessage
@@ -20,11 +21,27 @@ public class VoiceDataNetworkMessage : IHawkMessage
     {
         bytesWritten = reader.ReadInt32();
         var bytesToRead = reader.ReadInt32();
-        compressed = new byte[bytesToRead];
-
-        for (var i = 0; i < bytesToRead; ++i)
+        var bytesBuffer = new byte[bytesToRead];
+        
+        int bytesRead;
+        
+        for (bytesRead = 0; bytesRead < bytesToRead; bytesRead++)
         {
-            compressed[i] = reader.ReadByte();
+            try
+            {
+                bytesBuffer[bytesRead] = reader.ReadByte();
+            }
+            catch (IndexOutOfRangeException)
+            {
+                break;
+            }
+        }
+
+        compressed = new byte[bytesRead];
+        
+        for (var i = 0; i < bytesRead; ++i)
+        {
+            compressed[i] = bytesBuffer[i];
         }
     }
 }
