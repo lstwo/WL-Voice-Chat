@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -42,6 +43,11 @@ namespace WLProxChat
         private int bufferCountLastFrame;
 
         private byte RPC_SEND_VOICE_DATA;
+        
+        private HawkConnection myConnection;
+        private HawkConnection ownerConnection;
+
+        private bool isOwner;
 
         protected override void Start()
         {
@@ -71,10 +77,12 @@ namespace WLProxChat
         {
             base.NetworkPost(networkObject);
 
-            if (networkObject.IsServer())
+            /*if (networkObject.IsServer())
             {
                 networkObject.AssignOwnership(player.networkObject.GetOwner(), true);
-            }
+            }*/
+
+            isOwner = player.networkObject.GetOwner().Me;
             
             StartCoroutine(VoiceCaptureLoop());
         }
@@ -103,7 +111,7 @@ namespace WLProxChat
             {
                 yield return wait;
 
-                if (networkObject == null || !networkObject.IsOwner())
+                if (networkObject == null || !isOwner)
                 {
                     continue;
                 }
@@ -121,7 +129,7 @@ namespace WLProxChat
 
         private void OwnerSendVoiceData()
         {
-            if (networkObject == null || !networkObject.IsOwner())
+            if (networkObject == null || !isOwner)
             {
                 return;
             }
@@ -249,7 +257,7 @@ namespace WLProxChat
 
         private void OnGUI()
         {
-            if (networkObject == null || !networkObject.IsOwner())
+            if (networkObject == null || !isOwner)
                 return;
 
             GUILayout.BeginArea(new Rect(10, 10, 400, 650), "WL Voice Chat Debug", GUI.skin.window);
@@ -282,6 +290,5 @@ namespace WLProxChat
 
             GUILayout.EndArea();
         }
-
     }
 }
