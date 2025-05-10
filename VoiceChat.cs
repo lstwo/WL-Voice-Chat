@@ -70,13 +70,13 @@ namespace WLProxChat
         protected override void NetworkPost(HawkNetworkObject networkObject)
         {
             base.NetworkPost(networkObject);
-            
-            networkObject.AssignOwnership(player.networkObject.GetOwner(), true);
 
-            if (networkObject.IsOwner())
+            if (networkObject.IsServer())
             {
-                StartCoroutine(VoiceCaptureLoop());
+                networkObject.AssignOwnership(player.networkObject.GetOwner(), true);
             }
+            
+            StartCoroutine(VoiceCaptureLoop());
         }
 
         private void FixedUpdate()
@@ -102,6 +102,11 @@ namespace WLProxChat
             while (running)
             {
                 yield return wait;
+
+                if (networkObject == null || !networkObject.IsOwner())
+                {
+                    continue;
+                }
 
                 SetSteamVoiceRecord();
                 
@@ -171,14 +176,20 @@ namespace WLProxChat
         {
             try
             {
+                hasReceivedData = true;
+
                 var compressed = reader.ReadBytesAndSize().ToArray();
 
                 compressedStream.SetLength(0);
                 compressedStream.Write(compressed, 0, compressed.Length);
                 compressedStream.Position = 0;
+                
+                lastCompressedSize = compressed.Length;
 
                 decompressedStream.SetLength(0);
                 var written = SteamUser.DecompressVoice(compressed, decompressedStream);
+                
+                lastDecompressedSize = written;
 
                 if (written <= 0)
                 {
@@ -232,18 +243,45 @@ namespace WLProxChat
             SteamUser.VoiceRecord = false;
         }
 
+        private int lastCompressedSize = 0;
+        private int lastDecompressedSize = 0;
+        private bool hasReceivedData = false;
+
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(10, 10, 300, 200), "WL Voice Chat Debug", GUI.skin.window);
-            GUILayout.Label($"Buffer Size: {audioQueue.Count} (last: {bufferCountLastFrame})");
+            if (networkObject == null || !networkObject.IsOwner())
+                return;
+
+            GUILayout.BeginArea(new Rect(10, 10, 400, 650), "WL Voice Chat Debug", GUI.skin.window);
+
+            GUILayout.Label($"[SteamUser.HasVoiceData]: {SteamUser.HasVoiceData}");
+            GUILayout.Label($"[SteamUser.VoiceRecord]: {SteamUser.VoiceRecord}");
+            GUILayout.Label($"Muted: {isMuted}");
+            GUILayout.Label($"VoiceChat Enabled: {enableVoiceChat}");
+            GUILayout.Label($"Mode: {Mode}");
+            GUILayout.Space(10);
+
+            GUILayout.Label($"[AudioSource] IsPlaying: {audioSource.isPlaying}");
+            GUILayout.Label($"Volume: {audioSource.volume:0.00}, SpatialBlend: {audioSource.spatialBlend:0.00}");
+            GUILayout.Label($"AudioSource Pos: {transform.position}");
+            GUILayout.Space(10);
+
+            GUILayout.Label($"Buffer Size: {audioQueue.Count} (Last Frame: {bufferCountLastFrame})");
             GUILayout.Label($"Samples Queued: {totalSamplesQueued}");
             GUILayout.Label($"Samples Dequeued: {totalSamplesDequeued}");
-            GUILayout.Label($"Volume: {Volume:0.00}");
+            GUILayout.Label($"Last Compressed Size: {lastCompressedSize} bytes");
+            GUILayout.Label($"Last Decompressed Size: {lastDecompressedSize} bytes");
+            GUILayout.Label($"Received Audio: {hasReceivedData}");
+
+            GUILayout.Space(10);
+
             if (!string.IsNullOrEmpty(lastError))
             {
                 GUILayout.Label($"<color=red>Last Error: {lastError}</color>");
             }
+
             GUILayout.EndArea();
         }
+
     }
 }
