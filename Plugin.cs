@@ -32,7 +32,7 @@ public class Plugin : BaseUnityPlugin
 
         [HarmonyPatch(typeof(PlayerControllerInteractor), "Start")]
         [HarmonyPostfix]
-        public static void PlayerController_Start_Postfix(ref PlayerController __instance)
+        public static void PlayerController_Start_Postfix(ref PlayerControllerInteractor __instance)
         {
             var go = new GameObject("Voice Chat Manager")
             {
@@ -40,11 +40,11 @@ public class Plugin : BaseUnityPlugin
             };
 
             var source = go.AddComponent<AudioSource>();
-            source.spatialBlend = 1.0f;
+            source.spatialBlend = 0.0f;
             
             var voiceChat = go.AddComponent<VoiceChat>();
-            voiceChat.player = __instance;
-            voiceChat.source = source;
+            voiceChat.player = __instance.GetComponent<PlayerController>();
+            voiceChat.audioSource = source;
         }
     }
 }
