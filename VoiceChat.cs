@@ -59,7 +59,6 @@ namespace WLProxChat
             streamingClip = AudioClip.Create("SteamVoice", sampleRate * 10, channels, sampleRate, true, OnAudioRead, OnAudioSetPosition);
             audioSource.clip = streamingClip;
             audioSource.loop = true;
-            audioSource.rolloffMode = AudioRolloffMode.Logarithmic;
             audioSource.minDistance = 10f;
             audioSource.Play();
 
@@ -89,6 +88,7 @@ namespace WLProxChat
         {
             audioSource.spatialBlend = SpacialBlend;
             audioSource.maxDistance = MaxDistance;
+            audioSource.rolloffMode = AudioRolloff;
         }
 
         private void FixedUpdate()
