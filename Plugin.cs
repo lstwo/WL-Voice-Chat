@@ -4,6 +4,7 @@ using BepInEx.Logging;
 using HarmonyLib;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using Object = UnityEngine.Object;
 
 namespace WLProxChat;
 
@@ -30,9 +31,9 @@ public class Plugin : BaseUnityPlugin
             __instance.gameObject.AddComponent<AudioListener>();
         }
 
-        [HarmonyPatch(typeof(PlayerControllerInteractor), "Start")]
+        [HarmonyPatch(typeof(PlayerControllerInteractor), "Awake")]
         [HarmonyPostfix]
-        public static void PlayerController_Start_Postfix(ref PlayerControllerInteractor __instance)
+        public static void PlayerController_Awake_Postfix(ref PlayerControllerInteractor __instance)
         {
             var go = new GameObject("Voice Chat Manager")
             {
@@ -45,6 +46,16 @@ public class Plugin : BaseUnityPlugin
             var voiceChat = go.AddComponent<VoiceChat>();
             voiceChat.player = __instance.GetComponent<PlayerController>();
             voiceChat.audioSource = source;
+        }
+
+        [HarmonyPatch(typeof(Object), nameof(Destroy), typeof(Object))]
+        [HarmonyPrefix]
+        public static void Object_Destroy_Prefix(Object obj)
+        {
+            if (obj.name == "Voice Chat Manager")
+            {
+                throw new Exception("Voice Chat Manager destroyed!");
+            }
         }
     }
 }

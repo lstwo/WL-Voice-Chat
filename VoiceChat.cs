@@ -17,7 +17,9 @@ namespace WLProxChat
         public static float Volume = 1f;
         public static float SpacialBlend = 1f;
         public static VoiceChatMode Mode = VoiceChatMode.Off;
-        public static bool enableVoiceChat = false;
+        public static bool EnableVoiceChat = false;
+        public static float MaxDistance = 250f;
+        public static AudioRolloffMode AudioRolloff = AudioRolloffMode.Logarithmic;
 
         public AudioSource audioSource;
         public PlayerController player;
@@ -30,7 +32,7 @@ namespace WLProxChat
 
         private const int channels = 1;
 
-        private bool running;
+        private bool running = true;
         private int sampleRate = 16000;
 
         private Transform playerBodyTransform;
@@ -47,8 +49,6 @@ namespace WLProxChat
         private HawkConnection myConnection;
         private HawkConnection ownerConnection;
 
-        private bool isOwner;
-
         protected override void Start()
         {
             base.Start();
@@ -59,8 +59,7 @@ namespace WLProxChat
             audioSource.clip = streamingClip;
             audioSource.loop = true;
             audioSource.rolloffMode = AudioRolloffMode.Logarithmic;
-            audioSource.maxDistance = 250f;
-            audioSource.minDistance = 5f;
+            audioSource.minDistance = 10f;
             audioSource.Play();
 
             running = true;
@@ -77,14 +76,18 @@ namespace WLProxChat
         {
             base.NetworkPost(networkObject);
 
-            /*if (networkObject.IsServer())
+            if (networkObject.IsServer())
             {
                 networkObject.AssignOwnership(player.networkObject.GetOwner(), true);
-            }*/
-
-            isOwner = player.networkObject.GetOwner().Me;
+            }
             
             StartCoroutine(VoiceCaptureLoop());
+        }
+
+        private void Update()
+        {
+            audioSource.spatialBlend = SpacialBlend;
+            audioSource.maxDistance = MaxDistance;
         }
 
         private void FixedUpdate()
@@ -98,52 +101,64 @@ namespace WLProxChat
             {
                 transform.position = playerBodyTransform.position;
             }
-            
-            audioSource.volume = enableVoiceChat ? Volume : 0f;
-            audioSource.spatialBlend = SpacialBlend;
         }
         
         private IEnumerator VoiceCaptureLoop()
         {
             var wait = new WaitForSeconds(0.025f);
+            
+            debug("voice capture loop method");
 
             while (running)
             {
                 yield return wait;
 
-                if (networkObject == null || !isOwner)
+                debug("voice capture loop");
+
+                if (networkObject == null || !networkObject.IsOwner())
                 {
                     continue;
                 }
 
                 SetSteamVoiceRecord();
                 
-                if (!SteamUser.HasVoiceData || !enableVoiceChat)
+                if (!SteamUser.HasVoiceData || !EnableVoiceChat)
                 {
                     continue;
                 }
 
                 OwnerSendVoiceData();
+                
+                debug("finish voice capture loop");
             }
         }
 
         private void OwnerSendVoiceData()
         {
-            if (networkObject == null || !isOwner)
+            debug("OwnerSendVoiceData");
+
+            if (networkObject == null || !networkObject.IsOwner())
             {
                 return;
             }
             
+            debug("check");
+            
             try
             {
                 var compressed = SteamUser.ReadVoiceDataBytes();
-                
+                debug(compressed);
+
                 if (compressed == null || compressed.Length == 0)
                 {
                     return;
                 }
                 
-                networkObject.SendRPCUnreliable(RPC_SEND_VOICE_DATA, RPCRecievers.All, compressed);
+                debug(compressed.Length);
+                
+                networkObject.SendRPCUnreliable(RPC_SEND_VOICE_DATA, RPCRecievers.Others, compressed);
+                
+                debug("sent rpc");
             }
             catch (Exception e)
             {
@@ -159,7 +174,7 @@ namespace WLProxChat
                 isMuted = !isMuted;
             }
 
-            if (enableVoiceChat && !isMuted)
+            if (EnableVoiceChat && !isMuted)
             {
                 if (Mode == VoiceChatMode.Off)
                 {
@@ -182,11 +197,14 @@ namespace WLProxChat
 
         private void RpcReceiveVoiceData(HawkNetReader reader, HawkRPCInfo info)
         {
+            debug("RpcReceiveVoiceData");
+
             try
             {
                 hasReceivedData = true;
 
                 var compressed = reader.ReadBytesAndSize().ToArray();
+                debug(compressed);
 
                 compressedStream.SetLength(0);
                 compressedStream.Write(compressed, 0, compressed.Length);
@@ -196,7 +214,8 @@ namespace WLProxChat
 
                 decompressedStream.SetLength(0);
                 var written = SteamUser.DecompressVoice(compressed, decompressedStream);
-                
+                debug(written);
+
                 lastDecompressedSize = written;
 
                 if (written <= 0)
@@ -206,6 +225,7 @@ namespace WLProxChat
 
                 decompressedStream.Position = 0;
                 var buffer = decompressedStream.ToArray();
+                debug(buffer.Length);
 
                 for (var i = 0; i < buffer.Length; i += 2)
                 {
@@ -216,7 +236,7 @@ namespace WLProxChat
                 }
 
                 bufferCountLastFrame = audioQueue.Count;
-
+                debug("finished receive voice data");
             }
             catch (Exception e)
             {
@@ -231,7 +251,8 @@ namespace WLProxChat
             {
                 if (audioQueue.TryDequeue(out var sample))
                 {
-                    data[i] = sample;
+                    var amplified = sample * Volume;
+                    data[i] = Mathf.Clamp(amplified, -1f, 1f);
                     totalSamplesDequeued++;
                 }
                 else
@@ -257,15 +278,17 @@ namespace WLProxChat
 
         private void OnGUI()
         {
-            if (networkObject == null || !isOwner)
+            if (networkObject == null || !networkObject.IsOwner())
                 return;
+
+            return;
 
             GUILayout.BeginArea(new Rect(10, 10, 400, 650), "WL Voice Chat Debug", GUI.skin.window);
 
             GUILayout.Label($"[SteamUser.HasVoiceData]: {SteamUser.HasVoiceData}");
             GUILayout.Label($"[SteamUser.VoiceRecord]: {SteamUser.VoiceRecord}");
             GUILayout.Label($"Muted: {isMuted}");
-            GUILayout.Label($"VoiceChat Enabled: {enableVoiceChat}");
+            GUILayout.Label($"VoiceChat Enabled: {EnableVoiceChat}");
             GUILayout.Label($"Mode: {Mode}");
             GUILayout.Space(10);
 
@@ -289,6 +312,16 @@ namespace WLProxChat
             }
 
             GUILayout.EndArea();
+        }
+
+        private static void debug(string message)
+        {
+            //Plugin.Logger.LogDebug(message);
+        }
+
+        private static void debug(object message)
+        {
+            debug(message?.ToString());
         }
     }
 }
