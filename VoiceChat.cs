@@ -1,208 +1,327 @@
-using Steamworks;
+using System;
+using System.Collections;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
+using UnityEngine;
+using Steamworks;
 using HawkNetworking;
 using ShadowLib.Networking;
-using UnityEngine;
-using WLProxChat;
 
-public class VoiceChat : ShadowNetworkBehaviour
+namespace WLProxChat
 {
-    public static float Volume;
-    
-    public AudioSource source;
-    public PlayerController player;
-
-    private MemoryStream output;
-    private MemoryStream stream;
-    private MemoryStream input;
-
-    private int optimalRate;
-    private int clipBufferSize;
-    private float[] clipBuffer;
-
-    private int playbackBuffer;
-    private int dataPosition;
-    private int dataReceived;
-
-    private byte RPC_VOICE_DATA;
-    
-    private bool initialized = false;
-    
-    private int debugPacketsReceived;
-    private float debugLastReceivedTime;
-    private float debugLastReadData;
-    private int debugLargestPlaybackBuffer;
-    private byte[] debugLastReceivedData;
-
-    private void OnGUI()
+    public class VoiceChat : ShadowNetworkBehaviour
     {
-        GUILayout.BeginArea(new Rect(10, 10, 300, 450), "Voice Chat Debug", GUI.skin.window);
-    
-        GUILayout.Label($"Is Initialized: {initialized}");
+        public static float Volume = 1f;
+        public static float SpacialBlend = 1f;
+        public static VoiceChatMode Mode = VoiceChatMode.Off;
+        public static bool EnableVoiceChat = false;
+        public static float MaxDistance = 250f;
+        public static AudioRolloffMode AudioRolloff = AudioRolloffMode.Logarithmic;
 
-        if (initialized)
+        public AudioSource audioSource;
+        public PlayerController player;
+
+        private ConcurrentQueue<float> audioQueue = new ConcurrentQueue<float>();
+        private AudioClip streamingClip;
+
+        private MemoryStream compressedStream = new MemoryStream();
+        private MemoryStream decompressedStream = new MemoryStream();
+
+        private const int channels = 1;
+
+        private bool running = true;
+        private int sampleRate = 16000;
+
+        private Transform playerBodyTransform;
+
+        private bool isMuted = false;
+
+        private int totalSamplesQueued;
+        private int totalSamplesDequeued;
+        private string lastError = "";
+        private int bufferCountLastFrame;
+
+        private byte RPC_SEND_VOICE_DATA;
+        
+        private HawkConnection myConnection;
+        private HawkConnection ownerConnection;
+
+        protected override void Start()
         {
-            GUILayout.Space(10);
+            base.Start();
 
-            GUILayout.Label($"Is Owner: {networkObject?.IsOwner()}");
-            GUILayout.Label($"Voice Mode: {VoiceChatMod.Mode}");
-            GUILayout.Label($"Voice Recording: {SteamUser.VoiceRecord}");
-            GUILayout.Label($"Has Voice Data: {SteamUser.HasVoiceData}");
+            sampleRate = (int)SteamUser.OptimalSampleRate;
 
-            GUILayout.Space(10);
-    
-            GUILayout.Label($"Optimal Sample Rate: {optimalRate}");
-            GUILayout.Label($"Clip Buffer Size: {clipBufferSize}");
-            GUILayout.Label($"Playback Buffer: {playbackBuffer}");
-            GUILayout.Label($"Data Position: {dataPosition}");
-            GUILayout.Label($"Data Received: {dataReceived}");
-            GUILayout.Label($"Last Read Audio Data: {debugLastReadData}");
-            GUILayout.Label($"Largest Playback Buffer: {debugLargestPlaybackBuffer}");
+            streamingClip = AudioClip.Create("SteamVoice", sampleRate * 10, channels, sampleRate, true, OnAudioRead, OnAudioSetPosition);
+            audioSource.clip = streamingClip;
+            audioSource.loop = true;
+            audioSource.rolloffMode = AudioRolloffMode.Logarithmic;
+            audioSource.minDistance = 10f;
+            audioSource.Play();
 
-            GUILayout.Space(10);
+            running = true;
+        }
 
-            GUILayout.Label($"Packets Received: {debugPacketsReceived}");
-            GUILayout.Label($"Last Packet Time: {debugLastReceivedTime:F2}s");
-            
-            if (debugLastReceivedData != null)
+        protected override void RegisterRPCs(HawkNetworkObject networkObject)
+        {
+            base.RegisterRPCs(networkObject);
+
+            RPC_SEND_VOICE_DATA = networkObject.RegisterRPC(RpcReceiveVoiceData);
+        }
+
+        protected override void NetworkPost(HawkNetworkObject networkObject)
+        {
+            base.NetworkPost(networkObject);
+
+            if (networkObject.IsServer())
             {
-                GUILayout.Label($"Last Received Data: [{string.Join(", ", debugLastReceivedData)}]");
+                networkObject.AssignOwnership(player.networkObject.GetOwner(), true);
+            }
+            
+            StartCoroutine(VoiceCaptureLoop());
+        }
+
+        private void Update()
+        {
+            audioSource.spatialBlend = SpacialBlend;
+            audioSource.maxDistance = MaxDistance;
+        }
+
+        private void FixedUpdate()
+        {
+            if (playerBodyTransform == null && player?.GetPlayerCharacter()?.GetPlayerBody() != null)
+            {
+                playerBodyTransform = player.GetPlayerCharacter().GetPlayerBody().transform;
+            }
+            
+            if (playerBodyTransform != null)
+            {
+                transform.position = playerBodyTransform.position;
+            }
+        }
+        
+        private IEnumerator VoiceCaptureLoop()
+        {
+            var wait = new WaitForSeconds(0.025f);
+            
+            debug("voice capture loop method");
+
+            while (running)
+            {
+                yield return wait;
+
+                debug("voice capture loop");
+
+                if (networkObject == null || !networkObject.IsOwner())
+                {
+                    continue;
+                }
+
+                SetSteamVoiceRecord();
+                
+                if (!SteamUser.HasVoiceData || !EnableVoiceChat)
+                {
+                    continue;
+                }
+
+                OwnerSendVoiceData();
+                
+                debug("finish voice capture loop");
             }
         }
 
-        GUILayout.EndArea();
-    }
-
-
-    protected override void RegisterRPCs(HawkNetworkObject networkObject)
-    {
-        base.RegisterRPCs(networkObject);
-
-        RPC_VOICE_DATA = networkObject.RegisterRPC(RpcVoiceData);
-    }
-
-    protected override void NetworkPost(HawkNetworkObject networkObject)
-    {
-        base.NetworkPost(networkObject);
-        
-        networkObject.AssignOwnership(player.networkObject.GetOwner(), false);
-        initialized = true;
-    }
-
-    protected override void Start()
-    {
-        base.Start();
-        
-        optimalRate = (int)SteamUser.OptimalSampleRate;
-
-        clipBufferSize = optimalRate * 5;
-        clipBuffer = new float[clipBufferSize];
-
-        stream = new MemoryStream();
-        output = new MemoryStream();
-        input = new MemoryStream();
-
-        source.clip = AudioClip.Create("VoiceData", 256, 1, optimalRate, true, OnAudioRead, null);
-        source.loop = true;
-        source.Play();
-    }
-
-    private void Update()
-    {
-        if (!initialized || networkObject == null || !networkObject.IsOwner())
+        private void OwnerSendVoiceData()
         {
-            return;
+            debug("OwnerSendVoiceData");
+
+            if (networkObject == null || !networkObject.IsOwner())
+            {
+                return;
+            }
+            
+            debug("check");
+            
+            try
+            {
+                var compressed = SteamUser.ReadVoiceDataBytes();
+                debug(compressed);
+
+                if (compressed == null || compressed.Length == 0)
+                {
+                    return;
+                }
+                
+                debug(compressed.Length);
+                
+                networkObject.SendRPCUnreliable(RPC_SEND_VOICE_DATA, RPCRecievers.Others, compressed);
+                
+                debug("sent rpc");
+            }
+            catch (Exception e)
+            {
+                lastError = e.Message;
+                Plugin.Logger.LogError($"Error reading / sending voice data: {e.Message} {e.StackTrace}");
+            }
+        }
+        
+        private void SetSteamVoiceRecord()
+        {
+            if (Input.GetKeyDown(KeyCode.M))
+            {
+                isMuted = !isMuted;
+            }
+
+            if (EnableVoiceChat && !isMuted)
+            {
+                if (Mode == VoiceChatMode.Off)
+                {
+                    SteamUser.VoiceRecord = false;
+                }
+                else if (Mode == VoiceChatMode.PushToTalk)
+                {
+                    SteamUser.VoiceRecord = Input.GetKey(KeyCode.T);
+                }
+                else if (Mode == VoiceChatMode.AlwaysOn)
+                {
+                    SteamUser.VoiceRecord = true;
+                }
+            }
+            else
+            {
+                SteamUser.VoiceRecord = false;
+            }
         }
 
-        source.volume = Volume;
-        var voiceMode = VoiceChatMod.Mode;
-
-        if (voiceMode == VoiceChatMode.Off)
+        private void RpcReceiveVoiceData(HawkNetReader reader, HawkRPCInfo info)
         {
+            debug("RpcReceiveVoiceData");
+
+            try
+            {
+                hasReceivedData = true;
+
+                var compressed = reader.ReadBytesAndSize().ToArray();
+                debug(compressed);
+
+                compressedStream.SetLength(0);
+                compressedStream.Write(compressed, 0, compressed.Length);
+                compressedStream.Position = 0;
+                
+                lastCompressedSize = compressed.Length;
+
+                decompressedStream.SetLength(0);
+                var written = SteamUser.DecompressVoice(compressed, decompressedStream);
+                debug(written);
+
+                lastDecompressedSize = written;
+
+                if (written <= 0)
+                {
+                    return;
+                }
+
+                decompressedStream.Position = 0;
+                var buffer = decompressedStream.ToArray();
+                debug(buffer.Length);
+
+                for (var i = 0; i < buffer.Length; i += 2)
+                {
+                    var sample = (short)(buffer[i] | (buffer[i + 1] << 8));
+                    var f = sample / 32768f;
+                    audioQueue.Enqueue(f);
+                    totalSamplesQueued++;
+                }
+
+                bufferCountLastFrame = audioQueue.Count;
+                debug("finished receive voice data");
+            }
+            catch (Exception e)
+            {
+                lastError = e.Message;
+                Plugin.Logger.LogWarning($"Error receiving / decompressing voice data: {e.Message} {e.StackTrace}");
+            }
+        }
+
+        private void OnAudioRead(float[] data)
+        {
+            for (var i = 0; i < data.Length; i++)
+            {
+                if (audioQueue.TryDequeue(out var sample))
+                {
+                    var amplified = sample * Volume;
+                    data[i] = Mathf.Clamp(amplified, -1f, 1f);
+                    totalSamplesDequeued++;
+                }
+                else
+                {
+                    data[i] = 0f;
+                }
+            }
+        }
+
+        private void OnAudioSetPosition(int newPosition) { }
+
+        protected override void OnDestroy()
+        {
+            base.OnDestroy();
+
+            running = false;
             SteamUser.VoiceRecord = false;
         }
-        else if(voiceMode == VoiceChatMode.AlwaysOn)
-        {
-            SteamUser.VoiceRecord = true;
-        }
-        else
-        {
-            SteamUser.VoiceRecord = Input.GetKey(KeyCode.V);
-        }
 
-        if (!SteamUser.HasVoiceData)
+        private int lastCompressedSize = 0;
+        private int lastDecompressedSize = 0;
+        private bool hasReceivedData = false;
+
+        private void OnGUI()
         {
+            if (networkObject == null || !networkObject.IsOwner())
+                return;
+
             return;
-        }
-        
-        var compressedWritten = SteamUser.ReadVoiceData(stream);
-        stream.Position = 0;
 
-        networkObject.SendRPCUnreliable(RPC_VOICE_DATA, RPCRecievers.All, new VoiceDataNetworkMessage
-            {bytesWritten = compressedWritten, compressed = stream.GetBuffer()}.Serialize());
-    }
+            GUILayout.BeginArea(new Rect(10, 10, 400, 650), "WL Voice Chat Debug", GUI.skin.window);
 
-    public void RpcVoiceData(HawkNetReader reader, HawkRPCInfo info)
-    {
-        if (!initialized)
-        {
-            return;
-        }
-        
-        debugPacketsReceived++;
-        debugLastReceivedTime = Time.time;
-        
-        var voiceData = reader.ReadHawkMessage<VoiceDataNetworkMessage>();
-        var compressed = voiceData.compressed;
-        var compressedWritten = voiceData.bytesWritten;
-        debugLastReceivedData = compressed.Skip(14).Take(16).ToArray();
-        
-        input.Write(compressed, 0, compressed.Length);
-        input.Position = 0;
-        
-        var uncompressedWritten = SteamUser.DecompressVoice(input, compressedWritten, output);
-        input.Position = 0;
-        
-        var outputBuffer = output.GetBuffer();
-        WriteToClip(outputBuffer, uncompressedWritten);
-        output.Position = 0;
-    }
+            GUILayout.Label($"[SteamUser.HasVoiceData]: {SteamUser.HasVoiceData}");
+            GUILayout.Label($"[SteamUser.VoiceRecord]: {SteamUser.VoiceRecord}");
+            GUILayout.Label($"Muted: {isMuted}");
+            GUILayout.Label($"VoiceChat Enabled: {EnableVoiceChat}");
+            GUILayout.Label($"Mode: {Mode}");
+            GUILayout.Space(10);
 
-    private void OnAudioRead(float[] data)
-    {
-        if (playbackBuffer > debugLargestPlaybackBuffer)
-        {
-            debugLargestPlaybackBuffer = playbackBuffer;
-        }
-        
-        for (var i = 0; i < data.Length; ++i)
-        {
-            data[i] = 0;
+            GUILayout.Label($"[AudioSource] IsPlaying: {audioSource.isPlaying}");
+            GUILayout.Label($"Volume: {audioSource.volume:0.00}, SpatialBlend: {audioSource.spatialBlend:0.00}");
+            GUILayout.Label($"AudioSource Pos: {transform.position}");
+            GUILayout.Space(10);
 
-            if (playbackBuffer <= 0)
+            GUILayout.Label($"Buffer Size: {audioQueue.Count} (Last Frame: {bufferCountLastFrame})");
+            GUILayout.Label($"Samples Queued: {totalSamplesQueued}");
+            GUILayout.Label($"Samples Dequeued: {totalSamplesDequeued}");
+            GUILayout.Label($"Last Compressed Size: {lastCompressedSize} bytes");
+            GUILayout.Label($"Last Decompressed Size: {lastDecompressedSize} bytes");
+            GUILayout.Label($"Received Audio: {hasReceivedData}");
+
+            GUILayout.Space(10);
+
+            if (!string.IsNullOrEmpty(lastError))
             {
-                continue;
+                GUILayout.Label($"<color=red>Last Error: {lastError}</color>");
             }
-            
-            dataPosition = (dataPosition + 1) % clipBufferSize;
-            data[i] = clipBuffer[dataPosition];
-            debugLastReadData = data[i];
-            playbackBuffer --;
+
+            GUILayout.EndArea();
         }
-    }
 
-    private void WriteToClip(byte[] uncompressed, int iSize)
-    {
-        for (var i = 0; i < iSize; i += 2)
+        private static void debug(string message)
         {
-            var converted = (short)(uncompressed[i] | uncompressed[i + 1] << 8) / 32767.0f;
-            clipBuffer[dataReceived] = converted;
-            Plugin.Logger.LogInfo(converted);
+            //Plugin.Logger.LogDebug(message);
+        }
 
-            dataReceived = (dataReceived +1) % clipBufferSize;
-
-            playbackBuffer++;
+        private static void debug(object message)
+        {
+            debug(message?.ToString());
         }
     }
 }
