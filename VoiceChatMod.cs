@@ -49,9 +49,13 @@ public class VoiceChatMod : BaseHack
 
         ui.AddSpacer(6);
 
-        rolloffLdb = ui.CreateLDBTrio("Proximity Volume Rolloff Mode", "lstwo.VoiceChatMode");
+        rolloffLdb = ui.CreateLDBTrio("Proximity Volume Rolloff Mode", "lstwo.VolumeRolloff");
         rolloffLdb.Dropdown.options = [new("Logarithmic (Smooth)"), new("Linear")];
         rolloffLdb.Button.OnClick += () => VoiceChat.AudioRolloff = (AudioRolloffMode)rolloffLdb.Dropdown.value;
+        
+        ui.AddSpacer(6);
+
+        hearYourselfToggle = ui.CreateToggle("lstwo.EnableHearYourself", "Enable Hearing Yourself", b => VoiceChat.HearYourself = b);
 
         ui.AddSpacer(6);
     }
@@ -81,4 +85,5 @@ public class VoiceChatMod : BaseHack
     private Toggle voiceChatToggle;
     private HacksUIHelper.LIBTrio maxDistanceLib;
     private HacksUIHelper.LDBTrio rolloffLdb;
+    private Toggle hearYourselfToggle;
 }

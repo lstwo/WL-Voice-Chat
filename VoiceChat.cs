@@ -17,9 +17,10 @@ namespace WLProxChat
         public static float Volume = 1f;
         public static float SpacialBlend = 1f;
         public static VoiceChatMode Mode = VoiceChatMode.Off;
-        public static bool EnableVoiceChat = false;
+        public static bool EnableVoiceChat = true;
         public static float MaxDistance = 250f;
         public static AudioRolloffMode AudioRolloff = AudioRolloffMode.Logarithmic;
+        public static bool HearYourself = false;
 
         public AudioSource audioSource;
         public PlayerController player;
@@ -156,7 +157,7 @@ namespace WLProxChat
                 
                 debug(compressed.Length);
                 
-                networkObject.SendRPCUnreliable(RPC_SEND_VOICE_DATA, RPCRecievers.Others, compressed);
+                networkObject.SendRPCUnreliable(RPC_SEND_VOICE_DATA, HearYourself ? RPCRecievers.All : RPCRecievers.Others, compressed);
                 
                 debug("sent rpc");
             }
