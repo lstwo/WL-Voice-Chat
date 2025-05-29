@@ -24,3 +24,7 @@ Download both files and move the `.dll` file to `BepInEx/plugins` and the `globa
 
 You can configure the mod by opening the **lstwoMODS menu** then going to **`Extra Mods > Voice Chat`**.
 You can configure your microphone in the **Steam settings** either in the **Steam app** or in the **`Shift + Tab`** menu under the sections `Voice` and `In-Game Voice`.
+
+# License
+
+https://github.com/lstwo/license/blob/main/LICENSE.md
